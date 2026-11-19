@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.cache/
+china_full.json
+ne_rivers.geojson
+ne_lakes.geojson
+test_tile.png
+.DS_Store

@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>山河万象 · 中国3D立体地形与季风气候名师课件</title>
+    <link rel="stylesheet" href="/src/styles.css?v=2" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- WebGL 3D Canvas Container -->
+      <div id="canvas-wrap"></div>
+
+      <!-- Projected Interactive 3D->2D Geographical Labels -->
+      <div id="label-layer" aria-hidden="false"></div>
+
+      <!-- Smartboard Chalk / Laser Annotation Canvas -->
+      <canvas id="chalk-canvas"></canvas>
+
+      <!-- Loading Curtain -->
+      <div id="loader-screen">
+        <div class="loader-emblem">
+          <div class="loader-ring"></div>
+          <div class="loader-seal">山河</div>
+        </div>
+        <h1 class="loader-title">山河万象 · 九州立体舆图</h1>
+        <p class="loader-sub">正在载入 SRTM 卫星数字高程、三十四省级政区、山川地形区与气候教学引擎…</p>
+        <div class="loader-bar"><span id="loader-progress"></span></div>
+      </div>
+
+      <!-- TOP-LEFT HEADER, CLASSROOM TOOLKIT & LIVE GEO-TELEMETRY -->
+      <header id="hud-header" class="hud-glass">
+        <div class="brand-row">
+          <div class="brand-seal">九州</div>
+          <div class="brand-text">
+            <h1>山河万象 · 中国3D立体地理全图</h1>
+            <p>SRTM 高程 · 34省区市 · 山川地形区 · 锋面雨带 · 课堂互动教具</p>
+          </div>
+          <div class="teacher-toolbar">
+            <button id="btn-profiler" type="button" class="tool-pill" title="开启3D激光切面与高程—降水双轴剖面仪">📐 剖面仪</button>
+            <button id="btn-quiz" type="button" class="tool-pill" title="无字盲图随堂抢答测验">🎯 随堂盲测</button>
+            <button id="btn-chalk" type="button" class="tool-pill" title="讲台电子粉笔与箭头批注">✏️ 板书</button>
+            <button id="btn-boost" type="button" class="tool-pill" title="教室投影仪大字号与高对比提亮模式">💡 大字提亮</button>
+            <button id="btn-zen" type="button" class="icon-pill" title="切换纯净观赏模式 (快捷键 H)">沉浸</button>
+          </div>
+        </div>
+        <div id="geo-telemetry" class="telemetry-bar">
+          <span class="tele-item"><i>经纬</i><b id="tele-lonlat">104.00°E · 35.20°N</b></span>
+          <span class="tele-sep"></span>
+          <span class="tele-item"><i>海拔</i><b id="tele-elev">1,850 m</b></span>
+          <span class="tele-sep"></span>
+          <span class="tele-item"><i>政区</i><b id="tele-prov">移动鼠标探查地形</b></span>
+          <span class="tele-sep"></span>
+          <span class="tele-item"><i>实时测算</i><b id="tele-climate">--</b></span>
+        </div>
+      </header>
+
+      <!-- FLOATING CHALKBOARD PALETTE BAR (Visible when Chalk is active) -->
+      <div id="chalk-bar" class="hud-glass">
+        <span class="chalk-label">✏️ 讲台板书</span>
+        <button type="button" class="swatch-btn is-active" data-color="#ff5a4e" style="--sw:#ff5a4e" title="朱砂红（暖流/重点）"></button>
+        <button type="button" class="swatch-btn" data-color="#ffd166" style="--sw:#ffd166" title="鎏金黄（界线/山脉）"></button>
+        <button type="button" class="swatch-btn" data-color="#38bdf8" style="--sw:#38bdf8" title="寒潮蓝（冬季风/水流）"></button>
+        <button type="button" class="swatch-btn" data-color="#42f5c8" style="--sw:#42f5c8" title="翡翠青"></button>
+        <label class="chalk-chk"><input type="checkbox" id="chk-chalk-arrow" checked />箭头</label>
+        <button type="button" id="btn-chalk-undo" class="mini-act">撤销</button>
+        <button type="button" id="btn-chalk-clear" class="mini-act">清屏</button>
+        <button type="button" id="btn-chalk-close" class="mini-act danger">退出</button>
+      </div>
+
+      <!-- FLOATING BLIND-MAP CLASSROOM QUIZ PANEL -->
+      <div id="quiz-panel" class="hud-glass">
+        <div class="quiz-head">
+          <span class="quiz-badge">🎯 无字盲图 · 随堂抢答</span>
+          <div class="quiz-cats">
+            <button type="button" class="qcat-btn is-active" data-qcat="all">综合</button>
+            <button type="button" class="qcat-btn" data-qcat="province">省区</button>
+            <button type="button" class="qcat-btn" data-qcat="mountain">山脉</button>
+            <button type="button" class="qcat-btn" data-qcat="river">江河</button>
+          </div>
+          <span id="quiz-score" class="quiz-score">得分 0 / 0</span>
+          <button type="button" id="btn-quiz-close" class="mini-act">退出</button>
+        </div>
+        <p id="quiz-prompt" class="quiz-prompt">正在出题…</p>
+        <div id="quiz-options" class="quiz-options"></div>
+        <div id="quiz-feedback" class="quiz-feedback"></div>
+        <div class="quiz-actions">
+          <button type="button" id="btn-quiz-reveal" class="mini-act">👁 口头提问·直接揭晓</button>
+          <button type="button" id="btn-quiz-next" class="mini-act primary">下一题 →</button>
+        </div>
+      </div>
+
+      <!-- INTERACTIVE 3D TERRAIN + PRECIPITATION PROFILER DRAWER -->
+      <div id="profiler-drawer" class="hud-glass">
+        <div class="prof-head">
+          <div class="prof-title-wrap">
+            <span class="prof-badge">📐 3D地形—降水双轴剖面仪</span>
+            <span id="profiler-hint" class="prof-hint">北纬 32°N · 三级阶梯经典剖面</span>
+          </div>
+          <div class="prof-presets">
+            <button type="button" class="prof-btn is-active" data-prof="lat32">北纬32°N (三级阶梯)</button>
+            <button type="button" class="prof-btn" data-prof="lat36">北纬36°N (黄土太行)</button>
+            <button type="button" class="prof-btn" data-prof="lon108">东经108.5°E (穿秦岭)</button>
+            <button type="button" id="btn-prof-custom" class="prof-btn accent">✂️ 鼠标任选两点</button>
+            <button type="button" id="btn-prof-close" class="mini-act">关闭 ×</button>
+          </div>
+        </div>
+        <div class="prof-canvas-wrap">
+          <canvas id="profiler-canvas"></canvas>
+        </div>
+        <div class="prof-foot">
+          <span id="profiler-readout">💡 移动鼠标滑过上方剖面曲线，3D 沙盘将实时亮起青色激光探针同步定位迎风坡与背风盆地！</span>
+          <span class="prof-legend-inline"><i style="background:#f6d27a"></i>地形高程(m) <i style="background:#38bdf8"></i>年降水量(mm)</span>
+        </div>
+      </div>
+
+      <!-- LEFT PANEL: CLIMATE ENGINE, MONTHLY RAINBELT, LAYERS & CAMERA PRESETS -->
+      <aside id="hud-left" class="hud-glass hud-side">
+        <section class="panel-sec">
+          <div class="sec-head">
+            <span class="sec-kicker">CLIMATE & MONSOON ENGINE</span>
+            <h2>气候与锋面雨带系统</h2>
+          </div>
+          <div id="climate-modes" class="mode-list">
+            <button type="button" class="mode-btn is-active" data-climate="0">
+              <span class="mode-dot c-nat"></span>
+              <div class="mode-copy">
+                <strong>自然地貌真彩</strong>
+                <small>随四季/月份演替的植被、沙漠与雪线</small>
+              </div>
+            </button>
+            <button type="button" class="mode-btn" data-climate="1">
+              <span class="mode-dot c-zone"></span>
+              <div class="mode-copy">
+                <strong>中国五大气候类型</strong>
+                <small>热带/亚热带/温带季风 · 大陆性 · 高原山地</small>
+              </div>
+            </button>
+            <button type="button" class="mode-btn" data-climate="2">
+              <span class="mode-dot c-wind"></span>
+              <div class="mode-copy">
+                <strong>东亚季风环流场</strong>
+                <small>夏半年东南/西南季风 · 冬半年寒潮绕流</small>
+              </div>
+            </button>
+            <button type="button" class="mode-btn" data-climate="3">
+              <span class="mode-dot c-temp"></span>
+              <div class="mode-copy">
+                <strong>季节气温与等温线</strong>
+                <small>海拔递减率热力场与 0℃（秦淮线）追踪</small>
+              </div>
+            </button>
+            <button type="button" class="mode-btn" data-climate="4">
+              <span class="mode-dot c-rain"></span>
+              <div class="mode-copy">
+                <strong>降水量与锋面雨带/台风</strong>
+                <small>等降水量线 · 副高脊线 · 立体雨雪与台风</small>
+              </div>
+            </button>
+          </div>
+
+          <!-- 1-12 Month Frontal Rainbelt & Subtropical High Control -->
+          <div class="month-box">
+            <div class="month-head">
+              <span>🗓 1—12月锋面雨带推移</span>
+              <b id="val-month">7月 · 盛夏</b>
+            </div>
+            <input type="range" id="rng-month" min="1" max="12" step="1" value="7" />
+            <div class="month-quick">
+              <button type="button" data-m="4">4月春旱</button>
+              <button type="button" data-m="6">6月梅雨</button>
+              <button type="button" data-m="7" class="is-active">7月伏旱/台风</button>
+              <button type="button" data-m="9">9月秋雨</button>
+              <button type="button" data-m="1">1月寒潮</button>
+            </div>
+          </div>
+
+          <!-- Dynamic Legend & Exam Note -->
+          <div id="climate-legend" class="climate-legend"></div>
+        </section>
+
+        <section class="panel-sec">
+          <div class="sec-head">
+            <span class="sec-kicker">CARTOGRAPHIC & TEACHING LAYERS</span>
+            <h2>地理要素与专题图层</h2>
+          </div>
+          <div class="toggle-grid">
+            <label class="toggle-chip">
+              <input type="checkbox" id="chk-borders" checked />
+              <span>省级政区界</span>
+            </label>
+            <label class="toggle-chip">
+              <input type="checkbox" id="chk-capitals" checked />
+              <span>34省会/首府</span>
+            </label>
+            <label class="toggle-chip">
+              <input type="checkbox" id="chk-mountains" checked />
+              <span>山脉与高峰</span>
+            </label>
+            <label class="toggle-chip">
+              <input type="checkbox" id="chk-rivers" checked />
+              <span>江河与名湖</span>
+            </label>
+            <label class="toggle-chip highlight-chip">
+              <input type="checkbox" id="chk-landforms" />
+              <span>四大高原/盆地/平原</span>
+            </label>
+            <label class="toggle-chip highlight-chip">
+              <input type="checkbox" id="chk-basin-color" />
+              <span>三大洋/内流水系色</span>
+            </label>
+            <label class="toggle-chip full-span highlight-chip">
+              <input type="checkbox" id="chk-huline" />
+              <span>🔥 胡焕庸人口分界线（黑河—腾冲线）</span>
+            </label>
+            <label class="toggle-chip full-span">
+              <input type="checkbox" id="chk-hydro-special" />
+              <span>⚡ 内外流区分界线 &amp; 阶梯超级水利枢纽</span>
+            </label>
+            <label class="toggle-chip full-span">
+              <input type="checkbox" id="chk-divides" />
+              <span>📏 三大阶梯 · 秦岭淮河 · 等降水量线</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-sec">
+          <div class="sec-head">
+            <span class="sec-kicker">CAMERA VANTAGE</span>
+            <h2>壮美山河巡礼</h2>
+          </div>
+          <div id="camera-presets" class="preset-grid">
+            <button type="button" class="preset-btn is-active" data-preset="panorama">九州全览</button>
+            <button type="button" class="preset-btn" data-preset="everest">世界屋脊·珠峰</button>
+            <button type="button" class="preset-btn" data-preset="qinling">秦岭淮河·脊梁</button>
+            <button type="button" class="preset-btn" data-preset="sichuan">天府盆地·三峡</button>
+            <button type="button" class="preset-btn" data-preset="xinjiang">天山南北·西域</button>
+            <button type="button" class="preset-btn" data-preset="southeast">东南山海·台海</button>
+            <button type="button" class="preset-btn" data-preset="northeast">白山黑水·东北</button>
+          </div>
+        </section>
+      </aside>
+
+      <!-- RIGHT PANEL: DOSSIER CARD (WITH CLIMATOGRAPH & FLANK CONTRAST) + 4-TAB DIRECTORY -->
+      <aside id="hud-right" class="hud-glass hud-side">
+        <section id="dossier-card" class="panel-sec dossier-sec">
+          <div class="dossier-badge-row">
+            <span id="dos-tag" class="dos-tag">九州总览</span>
+            <button id="dos-reset" type="button" class="dos-reset" title="返回全国总览">重置视角</button>
+          </div>
+          <h2 id="dos-title">中华人民共和国 · 立体地形全图</h2>
+          <p id="dos-sub" class="dos-sub">地势西高东低，呈三级阶梯状分布 · 点击省区、山脉、地形区或江河查看详志与考点图表</p>
+          <div id="dos-metrics" class="dos-metrics">
+            <div class="metric-box"><span>世界最高峰</span><strong>8,848.86 m</strong><small>珠穆朗玛峰</small></div>
+            <div class="metric-box"><span>陆地最低点</span><strong>-154.31 m</strong><small>吐鲁番艾丁湖</small></div>
+            <div class="metric-box"><span>省级行政区</span><strong>34 个</strong><small>23省·5区·4市·2特区</small></div>
+          </div>
+
+          <!-- Dynamic Textbook Climatograph (Shown when a Province/Capital is selected!) -->
+          <div id="dos-clim-wrap" class="dos-clim-wrap" hidden>
+            <div class="clim-head">
+              <span>📊 省会逐月气温曲线与降水柱状图</span>
+              <small><i style="background:#ff6b57"></i>气温(℃) <i style="background:#38bdf8"></i>降水(mm)</small>
+            </div>
+            <canvas id="dos-clim-canvas"></canvas>
+            <p id="dos-clim-rule" class="clim-rule"></p>
+          </div>
+
+          <!-- Dynamic Boundary Mountain Flank Contrast Box (Shown when a Mountain is selected!) -->
+          <div id="dos-flank-box" class="dos-flank-box" hidden></div>
+
+          <p id="dos-desc" class="dos-desc">
+            自青藏高原“世界屋脊”向东逐级下降，经内蒙古、黄土、云贵高原与塔里木、准噶尔、四川盆地，延展至东北、华北、长江中下游三大冲积平原及广阔大陆架海域。
+          </p>
+        </section>
+
+        <!-- Quick Jump Directory Tabs -->
+        <section class="panel-sec explorer-sec">
+          <div class="tab-bar" role="tablist">
+            <button type="button" class="tab-btn is-active" data-tab="provinces">34省区</button>
+            <button type="button" class="tab-btn" data-tab="landforms">14地形区</button>
+            <button type="button" class="tab-btn" data-tab="mountains">22山脉</button>
+            <button type="button" class="tab-btn" data-tab="rivers">14江河</button>
+          </div>
+          <div id="tab-provinces" class="tab-pane is-active">
+            <div id="prov-matrix" class="prov-matrix"></div>
+          </div>
+          <div id="tab-landforms" class="tab-pane">
+            <div id="landform-list" class="entity-list"></div>
+          </div>
+          <div id="tab-mountains" class="tab-pane">
+            <div id="mtn-list" class="entity-list"></div>
+          </div>
+          <div id="tab-rivers" class="tab-pane">
+            <div id="river-list" class="entity-list"></div>
+          </div>
+        </section>
+      </aside>
+
+      <!-- BOTTOM-CENTER DOCK: FOUR SEASONS + LIGHTING + RELIEF EXAGGERATION -->
+      <footer id="hud-bottom" class="hud-glass">
+        <div class="season-group">
+          <button type="button" class="season-btn" data-season="0" data-month="4">
+            <span class="s-icon">🌸</span>
+            <div class="s-txt"><strong>春</strong><small>4月复苏</small></div>
+          </button>
+          <button type="button" class="season-btn is-active" data-season="1" data-month="7">
+            <span class="s-icon">🌿</span>
+            <div class="s-txt"><strong>夏</strong><small>7月苍翠</small></div>
+          </button>
+          <button type="button" class="season-btn" data-season="2" data-month="10">
+            <span class="s-icon">🍁</span>
+            <div class="s-txt"><strong>秋</strong><small>10月尽染</small></div>
+          </button>
+          <button type="button" class="season-btn" data-season="3" data-month="1">
+            <span class="s-icon">❄️</span>
+            <div class="s-txt"><strong>冬</strong><small>1月冰封</small></div>
+          </button>
+          <button type="button" id="btn-season-cycle" class="cycle-btn" title="自动按1—12月连续演替四季雪线、副高与雨带">
+            <span id="cycle-indicator" class="cycle-dot"></span>全年流转
+          </button>
+        </div>
+
+        <div class="dock-divider"></div>
+
+        <div class="env-controls">
+          <div class="ctrl-item">
+            <label for="rng-exag">地形起伏 <b id="val-exag">1.25×</b></label>
+            <input type="range" id="rng-exag" min="0.6" max="2.2" step="0.05" value="1.25" />
+          </div>
+          <div class="ctrl-item">
+            <label>天光意境</label>
+            <div id="light-modes" class="mini-pills">
+              <button type="button" data-light="dawn">晨曦</button>
+              <button type="button" class="is-active" data-light="golden">鎏金</button>
+              <button type="button" data-light="noon">晴昼</button>
+              <button type="button" data-light="night">星夜</button>
+            </div>
+          </div>
+        </div>
+      </footer>
+
+      <!-- BOTTOM-RIGHT STANDARD SOUTH CHINA SEA INSET (《南海诸岛》附图) -->
+      <div id="scs-inset" class="hud-glass" title="点击聚焦南海与华南沿海视角">
+        <div class="scs-title">南海诸岛</div>
+        <canvas id="scs-canvas"></canvas>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js?v=2"></script>
+  </body>
+</html>
