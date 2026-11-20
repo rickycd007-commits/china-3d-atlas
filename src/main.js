@@ -281,7 +281,15 @@ async function initApp() {
       if (item.kind === 'capital') {
         appState.hoveredProv = entering ? item.provId : 0;
       } else if (item.kind === 'river') {
-        overlays.highlightRiver(entering ? item.id : null);
+        const selRiver = appState.selectedFeatureId?.startsWith('river:')
+          ? appState.selectedFeatureId.split(':')[1]
+          : null;
+        overlays.highlightRiver(entering ? item.id : selRiver);
+      } else if (item.kind === 'mountain') {
+        const selMtn = appState.selectedFeatureId?.startsWith('mountain:')
+          ? appState.selectedFeatureId.split(':')[1]
+          : null;
+        overlays.highlightMountain(entering ? item.id : selMtn);
       }
     },
   });
@@ -443,6 +451,26 @@ async function initApp() {
     }
   }
 
+  function computePointsBounds(pointArrays) {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, sumY = 0, cnt = 0;
+    for (const arr of pointArrays) {
+      for (const p of arr) {
+        if (p[0] < minX) minX = p[0];
+        if (p[0] > maxX) maxX = p[0];
+        if (p[2] < minZ) minZ = p[2];
+        if (p[2] > maxZ) maxZ = p[2];
+        sumY += p[1];
+        cnt++;
+      }
+    }
+    if (!cnt) return { cx: 0, cy: 1, cz: 0, span: 18 };
+    const cx = 0.5 * (minX + maxX);
+    const cz = 0.5 * (minZ + maxZ);
+    const cy = (sumY / cnt) * appState.exaggeration;
+    const span = Math.max(8, Math.hypot(maxX - minX, maxZ - minZ));
+    return { cx, cy, cz, span };
+  }
+
   function selectMountain(m, shouldFly = true) {
     clearCameraPresetActive();
     hideExtraDossierWidgets();
@@ -476,9 +504,9 @@ async function initApp() {
     dosDesc.textContent = `${m.name}主峰为${m.peak}（${m.elev}m），在宏观地貌与季风环流中承担「${m.role}」作用。`;
 
     if (shouldFly) {
-      const [px, pyBase, pz] = m.peakXYZ;
-      const py = pyBase * appState.exaggeration;
-      flyTo([px, py, pz], [px - 3.5, py + 15.5, pz + 18.5]);
+      const b = computePointsBounds([m.spine]);
+      const dist = Math.min(54, Math.max(19, b.span * 1.45));
+      flyTo([b.cx, b.cy, b.cz], [b.cx, b.cy + dist * 0.78, b.cz + dist * 0.85]);
     }
   }
 
@@ -502,9 +530,9 @@ async function initApp() {
     dosDesc.textContent = r.role;
 
     if (shouldFly) {
-      const [lx, lyBase, lz] = r.labelXYZ;
-      const ly = lyBase * appState.exaggeration;
-      flyTo([lx, ly, lz], [lx + 2.0, ly + 23.0, lz + 24.0]);
+      const b = computePointsBounds(r.segments);
+      const dist = Math.min(64, Math.max(24, b.span * 1.15));
+      flyTo([b.cx, b.cy, b.cz], [b.cx, b.cy + dist * 0.84, b.cz + dist * 0.82]);
     }
   }
 
@@ -594,15 +622,17 @@ async function initApp() {
       appState.selectedProv = 0;
       overlays.highlightRiver(null);
       overlays.highlightMountain(m.id);
-      const [px, pyB, pz] = m.peakXYZ;
-      flyTo([px, pyB * appState.exaggeration, pz], [px - 2, pyB + 17, pz + 19]);
+      const b = computePointsBounds([m.spine]);
+      const dist = Math.min(54, Math.max(19, b.span * 1.45));
+      flyTo([b.cx, b.cy, b.cz], [b.cx, b.cy + dist * 0.78, b.cz + dist * 0.85]);
     },
     onFocusRiver: (r) => {
       appState.selectedProv = 0;
       overlays.highlightMountain(null);
       overlays.highlightRiver(r.id);
-      const [lx, lyB, lz] = r.labelXYZ;
-      flyTo([lx, lyB * appState.exaggeration, lz], [lx, lyB + 26, lz + 25]);
+      const b = computePointsBounds(r.segments);
+      const dist = Math.min(64, Math.max(24, b.span * 1.15));
+      flyTo([b.cx, b.cy, b.cz], [b.cx, b.cy + dist * 0.84, b.cz + dist * 0.82]);
     },
     onExitQuiz: () => {
       document.getElementById('btn-quiz').classList.remove('is-active');
@@ -645,6 +675,13 @@ async function initApp() {
     btn.dataset.fId = `mountain:${m.id}`;
     btn.innerHTML = `<span>▲ ${m.name}</span><em>${m.peak} ${Math.round(m.elev)}m</em>`;
     btn.addEventListener('click', () => selectMountain(m, true));
+    btn.addEventListener('mouseenter', () => overlays.highlightMountain(m.id));
+    btn.addEventListener('mouseleave', () => {
+      const selMtn = appState.selectedFeatureId?.startsWith('mountain:')
+        ? appState.selectedFeatureId.split(':')[1]
+        : null;
+      overlays.highlightMountain(selMtn);
+    });
     mtnListEl.appendChild(btn);
   });
 

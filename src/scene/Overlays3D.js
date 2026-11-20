@@ -30,6 +30,8 @@ export function createOverlays3D(scene, atlasData, teachingEntities, labelLayerE
   const huLineGroup = new THREE.Group();
   const hydroSpecialGroup = new THREE.Group();
   const rainBeltGroup = new THREE.Group();
+  const activeRiverHighlightGroup = new THREE.Group();
+  const activeMountainHighlightGroup = new THREE.Group();
 
   root.add(
     riversGroup,
@@ -40,9 +42,128 @@ export function createOverlays3D(scene, atlasData, teachingEntities, labelLayerE
     landformsGroup,
     huLineGroup,
     hydroSpecialGroup,
-    rainBeltGroup
+    rainBeltGroup,
+    activeRiverHighlightGroup,
+    activeMountainHighlightGroup
   );
   scene.add(root);
+
+  // Shared animated uniform for 3D volumetric river/mountain highlight ribbons
+  const highlightTimeUniform = { value: 0 };
+
+  function clearHighlightGroup(grp) {
+    while (grp.children.length > 0) {
+      const child = grp.children[0];
+      grp.remove(child);
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    }
+  }
+
+  function createFlowingTubeMaterial(baseHex, pulseHex, speed = 4.2, opacity = 0.96, additive = false) {
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: !additive,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      uniforms: {
+        uTime: highlightTimeUniform,
+        uBaseColor: { value: new THREE.Color(baseHex) },
+        uPulseColor: { value: new THREE.Color(pulseHex) },
+        uSpeed: { value: speed },
+        uOpacity: { value: opacity },
+      },
+      vertexShader: /* glsl */ `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        uniform vec3 uBaseColor;
+        uniform vec3 uPulseColor;
+        uniform float uSpeed;
+        uniform float uOpacity;
+        varying vec2 vUv;
+        void main() {
+          float wave = 0.5 + 0.5 * sin(vUv.x * 26.0 - uTime * uSpeed);
+          float pulse = pow(wave, 3.0);
+          vec3 col = mix(uBaseColor, uPulseColor, pulse * 0.72);
+          gl_FragColor = vec4(col, uOpacity);
+        }
+      `,
+    });
+  }
+
+  function createVerticalVeilMaterial(colorHex, maxOpacity = 0.58) {
+    return new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      uniforms: {
+        uTime: highlightTimeUniform,
+        uColor: { value: new THREE.Color(colorHex) },
+        uMaxOpacity: { value: maxOpacity },
+      },
+      vertexShader: /* glsl */ `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform float uTime;
+        uniform vec3 uColor;
+        uniform float uMaxOpacity;
+        varying vec2 vUv;
+        void main() {
+          // vUv.y = 0 at ridge/river base, 1 at top of light curtain
+          float vFade = pow(1.0 - vUv.y, 1.85);
+          float shimmer = 0.82 + 0.18 * sin(vUv.x * 22.0 - uTime * 3.5);
+          gl_FragColor = vec4(uColor * (1.1 + (1.0 - vUv.y) * 0.35), vFade * uMaxOpacity * shimmer);
+        }
+      `,
+    });
+  }
+
+  function buildVerticalVeilGeometry(vec3Pts, curtainHeight) {
+    const n = vec3Pts.length;
+    const verts = new Float32Array(n * 2 * 3);
+    const uvs = new Float32Array(n * 2 * 2);
+    const indices = [];
+    for (let i = 0; i < n; i++) {
+      const p = vec3Pts[i];
+      const u = i / Math.max(1, n - 1);
+      verts[i * 6] = p.x;
+      verts[i * 6 + 1] = p.y;
+      verts[i * 6 + 2] = p.z;
+      verts[i * 6 + 3] = p.x;
+      verts[i * 6 + 4] = p.y + curtainHeight;
+      verts[i * 6 + 5] = p.z;
+
+      uvs[i * 4] = u;
+      uvs[i * 4 + 1] = 0;
+      uvs[i * 4 + 2] = u;
+      uvs[i * 4 + 3] = 1;
+
+      if (i < n - 1) {
+        const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1;
+        indices.push(a, b, c, b, d, c);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    return geo;
+  }
+
+  const riverDataById = new Map(atlasData.rivers.map((r) => [r.id, r]));
+  const mountainDataById = new Map(atlasData.mountains.map((m) => [m.id, m]));
+  let currentHighlightedRiverId = null;
+  let currentHighlightedMountainId = null;
 
   const scalableYObjects = [];
   const labelItems = [];
@@ -553,6 +674,75 @@ export function createOverlays3D(scene, atlasData, teachingEntities, labelLayerE
   const projVec = new THREE.Vector3();
   let currentExag = 1.0;
 
+  function rebuildHighlightedRiver(riverId) {
+    clearHighlightGroup(activeRiverHighlightGroup);
+    if (!riverId) return;
+    const r = riverDataById.get(riverId);
+    if (!r) return;
+
+    // Choose unmistakable high-contrast glowing color (amber-gold for Yellow River, bright electric cyan-jade for others)
+    const isYellow = riverId === 'yellow' || riverId === 'tarim';
+    const coreHex = isYellow ? '#ff9d00' : '#00e5ff';
+    const pulseHex = isYellow ? '#fff4b8' : '#d8ffff';
+    const haloHex = isYellow ? '#ffbb33' : '#00c8ff';
+
+    const coreMat = createFlowingTubeMaterial(coreHex, pulseHex, 5.2, 0.98, false);
+    const haloMat = createFlowingTubeMaterial(haloHex, '#ffffff', 5.2, 0.36, true);
+    const veilMat = createVerticalVeilMaterial(coreHex, 0.45);
+
+    for (const seg of r.segments) {
+      if (seg.length < 2) continue;
+      const pts = seg.map((p) => new THREE.Vector3(p[0], p[1] * currentExag + 0.16, p[2]));
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const tubularSegs = Math.max(24, Math.min(220, pts.length * 3));
+
+      const coreGeo = new THREE.TubeGeometry(curve, tubularSegs, 0.20, 8, false);
+      const haloGeo = new THREE.TubeGeometry(curve, tubularSegs, 0.42, 8, false);
+      const veilGeo = buildVerticalVeilGeometry(pts, 0.72);
+
+      activeRiverHighlightGroup.add(new THREE.Mesh(coreGeo, coreMat));
+      activeRiverHighlightGroup.add(new THREE.Mesh(haloGeo, haloMat));
+      activeRiverHighlightGroup.add(new THREE.Mesh(veilGeo, veilMat));
+    }
+  }
+
+  function rebuildHighlightedMountain(mtnId) {
+    clearHighlightGroup(activeMountainHighlightGroup);
+    if (!mtnId) return;
+    const m = mountainDataById.get(mtnId);
+    if (!m || !m.spine || m.spine.length < 2) return;
+
+    const pts = m.spine.map((p) => new THREE.Vector3(p[0], p[1] * currentExag + 0.20, p[2]));
+    const curve = new THREE.CatmullRomCurve3(pts);
+    const tubularSegs = Math.max(36, pts.length * 3);
+
+    // High-contrast fiery vermilion-gold ridge core + luminous vertical curtain veil so full length & strike pop over snow OR green!
+    const coreMat = createFlowingTubeMaterial('#ff5e2b', '#ffe07a', 3.4, 0.98, false);
+    const haloMat = createFlowingTubeMaterial('#ff9933', '#fff0b3', 3.4, 0.34, true);
+    const veilMat = createVerticalVeilMaterial('#ff7b36', 0.62);
+
+    activeMountainHighlightGroup.add(new THREE.Mesh(new THREE.TubeGeometry(curve, tubularSegs, 0.24, 8, false), coreMat));
+    activeMountainHighlightGroup.add(new THREE.Mesh(new THREE.TubeGeometry(curve, tubularSegs, 0.48, 8, false), haloMat));
+    activeMountainHighlightGroup.add(new THREE.Mesh(buildVerticalVeilGeometry(pts, 1.55), veilMat));
+
+    // Endpoint pillars marking start & end of the mountain range
+    const endMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
+    for (const endPt of [pts[0], pts[pts.length - 1]]) {
+      const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 1.55, 10), endMat);
+      pillar.position.set(endPt.x, endPt.y + 0.77, endPt.z);
+      activeMountainHighlightGroup.add(pillar);
+    }
+
+    // Pulsing Summit Crown Ring at main peak
+    const peakRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.55, 0.85, 32),
+      new THREE.MeshBasicMaterial({ color: 0xffe484, side: THREE.DoubleSide, transparent: true, opacity: 0.92, depthWrite: false })
+    );
+    peakRing.rotation.x = -Math.PI * 0.5;
+    peakRing.position.set(m.peakXYZ[0], m.peakXYZ[1] * currentExag + 0.32, m.peakXYZ[2]);
+    activeMountainHighlightGroup.add(peakRing);
+  }
+
   function setExaggeration(exag) {
     if (Math.abs(exag - currentExag) < 0.001) return;
     currentExag = exag;
@@ -568,6 +758,8 @@ export function createOverlays3D(scene, atlasData, teachingEntities, labelLayerE
         entry.mesh.position.y = entry.baseY * exag + entry.yOffset;
       }
     }
+    if (currentHighlightedRiverId) rebuildHighlightedRiver(currentHighlightedRiverId);
+    if (currentHighlightedMountainId) rebuildHighlightedMountain(currentHighlightedMountainId);
   }
 
   function applyRiverColors(highlightId = null) {
@@ -610,23 +802,28 @@ export function createOverlays3D(scene, atlasData, teachingEntities, labelLayerE
       applyRiverColors(null);
     },
     highlightRiver(riverId) {
-      applyRiverColors(riverId);
+      currentHighlightedRiverId = riverId || null;
+      applyRiverColors(currentHighlightedRiverId);
+      rebuildHighlightedRiver(currentHighlightedRiverId);
     },
     highlightMountain(mtnId) {
+      currentHighlightedMountainId = mtnId || null;
       for (const [id, info] of mtnSpineMats.entries()) {
-        if (!mtnId) {
+        if (!currentHighlightedMountainId) {
           info.mat.opacity = info.baseOpacity;
           info.mat.color.setHex(0xf3cf8a);
-        } else if (id === mtnId) {
+        } else if (id === currentHighlightedMountainId) {
           info.mat.opacity = 1.0;
-          info.mat.color.setHex(0x00ffd5);
+          info.mat.color.setHex(0xffd166);
         } else {
-          info.mat.opacity = info.baseOpacity * 0.3;
+          info.mat.opacity = info.baseOpacity * 0.25;
         }
       }
+      rebuildHighlightedMountain(currentHighlightedMountainId);
     },
     updateSubHighAndRainBelt,
     update(dt, time, camera, viewportW, viewportH, visibilityState, targetPoint) {
+      highlightTimeUniform.value = time;
       for (const bj of beijingRings) {
         bj.starMesh.rotation.y = time * 1.4;
         const s = 1.0 + 0.14 * Math.sin(time * 3.0);
